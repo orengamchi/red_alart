@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>גלובוס תלת ממדי - התראות צבע אדום</title>
+    
+    <!-- ייבוא Tailwind CSS לעיצוב מהיר ונקי -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- ייבוא ספריית Globe.gl (מבוססת Three.js) לטובת הגלובוס -->
+    <script src="https://unpkg.com/globe.gl"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        #globeViz {
+            width: 100vw;
+            height: 100vh;
+            cursor: grab;
+        }
+
+        #globeViz:active {
+            cursor: grabbing;
+        }
+
+        /* עיצוב החלונית הצפה החצי שקופה */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        /* ספינר טעינה */
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #ef4444;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* --- אפקט גליץ' לכותרת --- */
+        .glitch-text {
+            position: relative;
+            display: inline-block;
+        }
+        .glitch-text::before, .glitch-text::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.8;
+            pointer-events: none;
+        }
+        .glitch-text::before {
+            color: #0ff;
+            z-index: -1;
+            animation: glitch-anim-1 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) both infinite;
+            display: none;
+        }
+        .glitch-text::after {
+            color: #f0f;
+            z-index: -2;
+            animation: glitch-anim-2 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) both infinite;
+            display: none;
+        }
+        .is-glitching::before, .is-glitching::after {
+            display: block;
+        }
+
+        @keyframes glitch-anim-1 {
+            0% { transform: translate(0) }
+            20% { transform: translate(-3px, 3px) }
+            40% { transform: translate(-3px, -3px) }
+            60% { transform: translate(3px, 3px) }
+            80% { transform: translate(3px, -3px) }
+            100% { transform: translate(0) }
+        }
+        @keyframes glitch-anim-2 {
+            0% { transform: translate(0) }
+            20% { transform: translate(3px, -3px) }
+            40% { transform: translate(3px, 3px) }
+            60% { transform: translate(-3px, -3px) }
+            80% { transform: translate(-3px, 3px) }
+            100% { transform: translate(0) }
+        }
+
+        /* --- אנימציית רקע המודל (Fade + Blur) --- */
+        .overlay-enter {
+            animation: overlayFadeIn 0.5s ease forwards;
+        }
+        .overlay-exit {
+            animation: overlayFadeOut 0.5s ease forwards;
+        }
+        @keyframes overlayFadeIn {
+            0% { background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); }
+            100% { background-color: rgba(0,0,0,0.8); backdrop-filter: blur(8px); }
+        }
+        @keyframes overlayFadeOut {
+            0% { background-color: rgba(0,0,0,0.8); backdrop-filter: blur(8px); }
+            100% { background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); }
+        }
+
+        /* --- אנימציה פתיחת תלת-ממד (Holographic HUD) --- */
+        .modal-content-enter {
+            animation: holoOpen 0.7s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            transform-origin: center;
+        }
+        .modal-content-exit {
+            animation: holoClose 0.5s cubic-bezier(0.55, 0.085, 0.68, 0.53) forwards;
+            transform-origin: center;
+        }
+
+        @keyframes holoOpen {
+            0% { 
+                opacity: 0; 
+                transform: perspective(2000px) rotateX(45deg) translateY(50px) scale(0.9);
+                filter: blur(8px) brightness(1.5);
+            }
+            100% { 
+                opacity: 1; 
+                transform: perspective(2000px) rotateX(0deg) translateY(0) scale(1);
+                filter: blur(0px) brightness(1);
+            }
+        }
+
+        @keyframes holoClose {
+            0% { 
+                opacity: 1; 
+                transform: perspective(2000px) rotateX(0deg) translateY(0) scale(1);
+                filter: blur(0px) brightness(1);
+            }
+            100% { 
+                opacity: 0; 
+                transform: perspective(2000px) rotateX(-45deg) translateY(-50px) scale(0.9);
+                filter: blur(8px) brightness(0.5);
+            }
+        }
+
+        /* --- עיצוב לדגלונים (Markers) על המפה --- */
+        .map-marker-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            cursor: pointer;
+            pointer-events: auto;
+            transform: translateY(-50%);
+            user-select: none;
+            transition: z-index 0.2s;
+        }
+        
+        .marker-label {
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid #ef4444;
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.2s;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            backdrop-filter: blur(4px);
+        }
+
+        .marker-pin {
+            width: 12px;
+            height: 12px;
+            background-color: #ef4444;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ef4444, 0 0 25px #ef4444;
+            position: relative;
+        }
+
+        .marker-pin::after {
+            content: '';
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 2px;
+            height: 18px;
+            background: linear-gradient(to top, #ef4444, transparent);
+        }
+
+        .city-marker .marker-label {
+            border-color: #fbbf24;
+            color: #fbbf24;
+        }
+        .city-marker .marker-pin {
+            background-color: #fbbf24;
+            box-shadow: 0 0 10px #fbbf24, 0 0 25px #fbbf24;
+        }
+        .city-marker .marker-pin::after {
+            background: linear-gradient(to top, #fbbf24, transparent);
+        }
+
+        /* עיצוב ייחודי למדינה שלנו (ישראל) בצבע כחול */
+        .israel-marker .marker-label {
+            border-color: #3b82f6;
+            color: #3b82f6;
+        }
+        .israel-marker .marker-pin {
+            background-color: #3b82f6;
+            box-shadow: 0 0 10px #3b82f6, 0 0 25px #3b82f6;
+        }
+        .israel-marker .marker-pin::after {
+            background: linear-gradient(to top, #3b82f6, transparent);
+        }
+
+        .map-marker-inner:hover {
+            z-index: 50;
+        }
+        .map-marker-inner:hover .marker-label {
+            transform: scale(1.15) translateY(-5px);
+            background: rgba(239, 68, 68, 0.3);
+        }
+        .city-marker:hover .marker-label {
+            background: rgba(251, 191, 36, 0.3);
+        }
+        .israel-marker:hover .marker-label {
+            background: rgba(59, 130, 246, 0.3);
+        }
+
+        /* אנימציות הבהוב - אדום וישראל-כחול */
+        @keyframes alertBlink {
+            0%, 100% { opacity: 1; transform: scale(1); filter: brightness(1); }
+            50% { opacity: 0.7; transform: scale(1.3); filter: brightness(1.5); box-shadow: 0 0 20px #fff; }
+        }
+        .blinking .marker-pin {
+            animation: alertBlink 0.5s infinite;
+            background-color: #fff !important;
+            box-shadow: 0 0 15px #fff, 0 0 30px #fff !important;
+        }
+        .blinking .marker-label {
+            background: rgba(255, 0, 0, 0.9) !important;
+            color: white !important;
+            border-color: white !important;
+            animation: alertBlink 0.5s infinite;
+        }
+
+        @keyframes alertBlinkBlue {
+            0%, 100% { opacity: 1; transform: scale(1); filter: brightness(1); }
+            50% { opacity: 0.7; transform: scale(1.3); filter: brightness(1.5); box-shadow: 0 0 20px #3b82f6; }
+        }
+        .blinking-blue .marker-pin {
+            animation: alertBlinkBlue 0.5s infinite;
+            background-color: #fff !important;
+            box-shadow: 0 0 15px #fff, 0 0 30px #fff !important;
+        }
+        .blinking-blue .marker-label {
+            background: rgba(59, 130, 246, 0.9) !important;
+            color: white !important;
+            border-color: white !important;
+            animation: alertBlinkBlue 0.5s infinite;
+        }
+
+        .constant-glitch {
+            position: relative;
+            display: inline-block;
+        }
+        .constant-glitch::before, .constant-glitch::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0.8; pointer-events: none;
+        }
+        .constant-glitch::before {
+            color: #0ff; z-index: -1;
+            animation: glitch-anim-1 2s infinite linear alternate-reverse;
+        }
+        .constant-glitch::after {
+            color: #f0f; z-index: -2;
+            animation: glitch-anim-2 2.5s infinite linear alternate-reverse;
+        }
+        
+        .native-alert-label {
+            font-size: 1.2rem;
+            font-weight: 900;
+            color: #ff3333;
+            text-shadow: 0 0 10px #ff0000;
+            margin-bottom: 5px;
+            text-align: center;
+            letter-spacing: 2px;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        .threat-marker-inner {
+            position: relative;
+            width: 10px;
+            height: 35px;
+            cursor: default;
+            user-select: none;
+            pointer-events: auto;
+            transform: translateY(-50%);
+            z-index: 10;
+        }
+        .flag-pole {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 3px;
+            height: 35px;
+            background: linear-gradient(to right, #888, #444);
+            border-radius: 2px;
+            box-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .flag-fabric {
+            position: absolute;
+            bottom: 15px;
+            left: calc(50% + 1.5px);
+            width: 35px;
+            height: 22px;
+            border: 1px solid rgba(0,0,0,0.3);
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+            transform-origin: left center;
+            animation: wave-flag 2s infinite ease-in-out alternate;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .iran-flag {
+            background: linear-gradient(to bottom, #239f40 33.3%, #fff 33.3%, #fff 66.6%, #da0000 66.6%);
+        }
+        .hezbollah-flag {
+            background-color: #fceb15;
+        }
+        .hezbollah-logo {
+            color: #007a33;
+            font-weight: 900;
+            font-size: 8px;
+            line-height: 1;
+            text-align: center;
+        }
+        .iran-logo {
+            color: #da0000;
+            font-size: 10px;
+            line-height: 1;
+        }
+        @keyframes wave-flag {
+            0% { transform: perspective(100px) rotateY(0deg) skewY(-5deg); }
+            100% { transform: perspective(100px) rotateY(-15deg) skewY(5deg); }
+        }
+        .threat-label {
+            position: absolute;
+            bottom: -22px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            background: rgba(0,0,0,0.8);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            border: 1px solid #eab308;
+        }
+
+        /* הגדרות חיתוך וידאו בצורת המדינה */
+        #videoWrapper {
+            transition: all 0.5s ease-in-out;
+            background-color: #000;
+            /* מקסום מוחלט על הקונטיינר */
+            width: 100%;
+            height: 100%;
+        }
+        
+        .shape-shadow-container {
+            filter: drop-shadow(0 0 15px rgba(239, 68, 68, 0.8));
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- אזור הטעינה ההתחלתי -->
+    <div id="loadingOverlay" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black">
+        <div class="loader mb-4"></div>
+        <div class="text-white text-lg">טוען נתוני מפה...</div>
+    </div>
+
+    <!-- הגלובוס -->
+    <div id="globeViz" dir="ltr" class="w-full h-full"></div>
+
+    <!-- כותרת עליונה צפה -->
+    <div class="fixed top-4 left-0 w-full text-center z-40 pointer-events-none">
+        <h1 id="mainTitle" class="glitch-text text-3xl md:text-5xl font-extrabold text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]" data-text="צבע אדום, חפש מחסה">צבע אדום, חפש מחסה</h1>
+        <p class="text-gray-300 text-sm md:text-base mt-2 drop-shadow font-medium">Double click on the countries marked in red to view the footage</p>
+    </div>
+
+    <!-- חלונית צפה (Modal) לסרטונים מותאמת צורה -->
+    <div id="videoModal" class="hidden fixed inset-0 z-50 flex flex-col items-center justify-center pt-6 pb-12">
+        
+        <button id="closeBtn" class="absolute right-6 top-6 text-gray-300 hover:text-red-500 transition-colors focus:outline-none text-4xl font-bold leading-none z-50">&times;</button>
+        
+        <!-- התוכן מתפרס על רוב שטח המסך ליצירת מסיכה עצומה -->
+        <div id="modalContent" class="relative w-[95%] md:w-[90%] lg:w-[85%] h-[90vh] flex flex-col items-center opacity-0">
+            <!-- כותרות -->
+            <div class="flex flex-col items-center mb-4 text-white w-full z-10 shrink-0">
+                <h2 id="countryTitle" class="text-xl font-bold text-gray-400 mb-1 tracking-wider uppercase">שם המדינה</h2>
+                <div id="modalAlertTitle" class="constant-glitch native-alert-label" data-text="RED ALERT">RED ALERT</div>
+            </div>
+
+            <!-- וידאו בצורת המדינה (מוגדל לכל הקונטיינר) -->
+            <div class="shape-shadow-container flex-1 overflow-hidden w-full relative">
+                <div id="videoWrapper">
+                    <video id="countryVideo" class="w-full h-full object-cover pointer-events-none" autoplay playsinline>
+                        הדפדפן שלך אינו תומך בהפעלת סרטונים.
+                    </video>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- זכויות יוצרים וגרסה -->
+    <div class="fixed bottom-2 w-full text-center text-xs text-gray-400 z-[60] pointer-events-none drop-shadow-md">
+        &copy; Oren Gamchi | גרסה 2.1
+    </div>
+
+    <!-- כפתור סיור אוטומטי -->
+    <button id="autoTourBtn" class="fixed bottom-6 left-6 z-[60] bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-full shadow-[0_0_15px_rgba(239,68,68,0.5)] transition-all border border-red-400 backdrop-blur-md flex items-center gap-2 cursor-pointer pointer-events-auto">
+        <span id="autoTourIcon">▶</span>
+        <span id="autoTourText">Auto Tour</span>
+    </button>
+
+    <!-- בקרת שמע מוצפת -->
+    <div class="fixed bottom-6 right-6 z-[60] bg-gray-900 bg-opacity-80 p-3 rounded-full border border-gray-600 shadow-[0_0_15px_rgba(0,0,0,0.5)] flex items-center gap-3 backdrop-blur-md">
+        <button id="muteBtn" class="text-white text-xl hover:text-red-500 transition-colors focus:outline-none pointer-events-auto">🔊</button>
+        <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="0.1" class="w-20 md:w-24 accent-red-500 cursor-pointer pointer-events-auto">
+    </div>
+
+    <script>
+        let globalGeoJsonData = [];
+
+        const videoData = {
+            'France': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Ffrance.mp4?alt=media&token=5da43138-c2b4-4b93-ab73-20604e1f73e3',
+            'Netherlands': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fholand.mp4?alt=media&token=3eb41751-685d-4b93-bb6a-936183a82a9a',
+            'Italy': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fitaly.mp4?alt=media&token=eae4bf2c-3c0c-43dc-afcc-77a6bf6e4ddd',
+            'Poland': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fpoland.mp4?alt=media&token=8b088b15-3756-41b1-94bc-5f99d3260175',
+            'Switzerland': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fswizrland.mp4?alt=media&token=8b810ecf-76c0-43cc-86fb-4ddc6acc8181',
+            'Spain': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fspain.mp4?alt=media&token=4cba66b3-f0fd-4ff2-b228-eea79da45a3f',
+            'Portugal': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fportogal.mp4?alt=media&token=c1ca7e7f-a0da-4fc5-a57d-e47e427b4fb9',
+            'Russia': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Frussia.mp4?alt=media&token=16b233e4-7035-4d13-9bf6-d8483526feb6',
+            'Iceland': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fisland.mp4?alt=media&token=7636288f-fe1d-413d-954e-b12375195343',
+            'Brazil': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fbrazil.mp4?alt=media&token=ca8bf39f-0642-4807-8c3d-4d88d3d97422',
+            'Australia': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Faustralia.mp4?alt=media&token=a590432d-f6b3-45e9-94f7-ace5b6379218',
+            'China': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fchina.mp4?alt=media&token=f5b0c0d6-a7dd-4a70-ae37-3eb663e7d888',
+            'United Kingdom': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Fengland.mp4?alt=media&token=de4cf04b-a3a0-4b53-b898-8b2ee5395aae',
+            'United States of America': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Flos%20angles.mp4?alt=media&token=c884109c-58ba-4f7a-af5b-b803a0d44307',
+            'India': 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Findia.mp4?alt=media&token=6bab7af8-9422-411d-b6d3-74ecff9ed82d',
+            'Israel': '' // נשאר ריק כדי ליצור את אפקט המסיכה השחורה הייחודית
+        };
+
+        const nativeAlerts = {
+            'France': 'ALERTE ROUGE',
+            'Netherlands': 'CODE ROOD',
+            'Italy': 'ALLARME ROSSO',
+            'Poland': 'CZERWONY ALARM',
+            'Switzerland': 'ROTER ALARM',
+            'Spain': 'ALERTA ROJA',
+            'Portugal': 'ALERTA VERMELHO',
+            'Russia': 'КРАСНАЯ ТРЕВОГА',
+            'Iceland': 'RAUÐ VIÐVÖRUN',
+            'Brazil': 'ALERTA VERMELHO',
+            'Australia': 'RED ALERT',
+            'China': '红色警报',
+            'United Kingdom': 'RED ALERT',
+            'United States of America': 'RED ALERT',
+            'India': 'रेड अलर्ट',
+            'Israel': "LET RUN"
+        };
+
+        const markersData = [
+            { id: 'France', name: 'France', lat: 46.2276, lng: 2.2137, video: videoData['France'] },
+            { id: 'Netherlands', name: 'Netherlands', lat: 52.1326, lng: 5.2913, video: videoData['Netherlands'] },
+            { id: 'Italy', name: 'Italy', lat: 41.8719, lng: 12.5674, video: videoData['Italy'] },
+            { id: 'Poland', name: 'Poland', lat: 51.9194, lng: 19.1451, video: videoData['Poland'] },
+            { id: 'Switzerland', name: 'Switzerland', lat: 46.8182, lng: 8.2275, video: videoData['Switzerland'] },
+            { id: 'Spain', name: 'Spain', lat: 40.4637, lng: -3.7492, video: videoData['Spain'] },
+            { id: 'Portugal', name: 'Portugal', lat: 39.3999, lng: -8.2245, video: videoData['Portugal'] },
+            { id: 'Russia', name: 'Russia', lat: 61.5240, lng: 105.3188, video: videoData['Russia'] },
+            { id: 'Iceland', name: 'Iceland', lat: 64.9631, lng: -19.0208, video: videoData['Iceland'] },
+            { id: 'Brazil', name: 'Brazil', lat: -14.2350, lng: -51.9253, video: videoData['Brazil'] },
+            { id: 'Australia', name: 'Australia', lat: -25.2744, lng: 133.7751, video: videoData['Australia'] },
+            { id: 'China', name: 'China', lat: 35.8617, lng: 104.1954, video: videoData['China'] },
+            { id: 'United Kingdom', name: 'England', lat: 53.3555, lng: -2.1743, video: videoData['United Kingdom'] },
+            { id: 'United Kingdom', name: 'London', lat: 51.5074, lng: -0.1278, video: 'https://firebasestorage.googleapis.com/v0/b/portfolioflow-8qrng.firebasestorage.app/o/red_alarm%2Flondon.mp4?alt=media&token=d6c1a923-e907-4424-86f7-8bd5d8e01049', isCity: true },
+            { id: 'United States of America', name: 'Los Angeles', lat: 34.0522, lng: -118.2437, video: videoData['United States of America'], isCity: true },
+            { id: 'India', name: 'India', lat: 20.5937, lng: 78.9629, video: videoData['India'] },
+            // ישראל חייבת להיות אחרונה ברשימה כדי שהסיור יסתיים בה!
+            { id: 'Israel', name: 'Israel', lat: 31.0461, lng: 34.8516, video: videoData['Israel'] }
+        ];
+
+        // --- טעינת סרטונים ברקע (Preloading) ---
+        function preloadVideosInBackground() {
+            const preloaderDiv = document.createElement('div');
+            preloaderDiv.style.display = 'none';
+            document.body.appendChild(preloaderDiv);
+
+            Object.values(videoData).forEach(url => {
+                if (url) {
+                    const video = document.createElement('video');
+                    video.src = url;
+                    video.preload = 'auto'; // מורה לדפדפן לטעון את הווידאו מיידית
+                    video.muted = true; // למנוע בעיות של מדיניות הפעלה אוטומטית (Autoplay Policy)
+                    preloaderDiv.appendChild(video);
+                }
+            });
+            console.log("החלה טעינת סרטונים ברקע למניעת השהיות...");
+        }
+
+        // פונקציות עזר גיאומטריות לניתוח וסינון פוליגונים
+        function getPolygonArea(ring) {
+            let area = 0;
+            for (let i = 0; i < ring.length - 1; i++) {
+                area += (ring[i][0] * ring[i+1][1]) - (ring[i+1][0] * ring[i][1]);
+            }
+            return Math.abs(area / 2);
+        }
+
+        function getPolyBounds(poly) {
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            poly[0].forEach(pt => {
+                if (pt[0] < minX) minX = pt[0];
+                if (pt[0] > maxX) maxX = pt[0];
+                if (pt[1] < minY) minY = pt[1];
+                if (pt[1] > maxY) maxY = pt[1];
+            });
+            return {minX, maxX, minY, maxY};
+        }
+
+        // --- אלגוריתם חיתוך ויצירת מסיכה ענקית מרוכזת ---
+        function applyCountryMask(feature) {
+            const videoWrapper = document.getElementById('videoWrapper');
+            if (!feature || !feature.geometry) {
+                videoWrapper.style.maskImage = 'none';
+                videoWrapper.style.webkitMaskImage = 'none';
+                return;
+            }
+            
+            // עותק עמוק של הגאומטריה למניעת פגיעה בגלובוס
+            let geometry = JSON.parse(JSON.stringify(feature.geometry));
+            let isUSA = feature.properties.ADMIN === 'United States of America';
+
+            // 1. טיפול בחציית קו התאריך הבינלאומי (למעט ארה"ב שתטופל בנפרד בשל אלסקה)
+            if (!isUSA) {
+                let pts = [];
+                const extractRaw = (coords, isMulti) => {
+                    if(!isMulti) coords.forEach(r => r.forEach(p => pts.push(p)));
+                    else coords.forEach(pl => pl.forEach(r => r.forEach(p => pts.push(p))));
+                }
+                if(geometry.type === 'Polygon') extractRaw(geometry.coordinates, false);
+                else if(geometry.type === 'MultiPolygon') extractRaw(geometry.coordinates, true);
+                
+                let hasPos = false, hasNeg = false;
+                pts.forEach(p => { if (p[0] > 100) hasPos = true; if (p[0] < -100) hasNeg = true; });
+                
+                if (hasPos && hasNeg) {
+                    const wrapRing = (ring) => { ring.forEach(pt => { if (pt[0] < 0) pt[0] += 360; }); };
+                    if(geometry.type === 'Polygon') geometry.coordinates.forEach(wrapRing);
+                    else if(geometry.type === 'MultiPolygon') geometry.coordinates.forEach(poly => poly.forEach(wrapRing));
+                }
+            } else {
+                // לארה"ב - הזזת האיים האלאוטיים של אלסקה מאזור ה-+170 לאזור שלילי כדי לחבר לאלסקה
+                const fixUSARing = (ring) => { ring.forEach(pt => { if (pt[0] > 170) pt[0] -= 360; }); };
+                if(geometry.type === 'Polygon') geometry.coordinates.forEach(fixUSARing);
+                else if(geometry.type === 'MultiPolygon') geometry.coordinates.forEach(poly => poly.forEach(fixUSARing));
+            }
+
+            // 2. פירוק לפוליגונים, חישוב שטחים ומציאת היבשת המרכזית (Mainland)
+            let polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+            let maxArea = 0;
+            let largestPolyIdx = 0;
+            
+            let polyData = polygons.map((poly, idx) => {
+                let area = getPolygonArea(poly[0]);
+                let bounds = getPolyBounds(poly);
+                if (area > maxArea) { maxArea = area; largestPolyIdx = idx; }
+                return {poly, area, bounds, idx};
+            });
+
+            // 3. סינון חכם: זורקים איים מרוחקים (קולוניות מעבר לים) שגורמים לקופסה לגדול
+            let largestBounds = polyData[largestPolyIdx].bounds;
+            let buffer = 15; // טווח קרוב של עד 15 מעלות (איים קרובים בלבד)
+            let filteredPolygons = [];
+
+            polyData.forEach(pd => {
+                if (pd.idx === largestPolyIdx) {
+                    filteredPolygons.push(pd.poly); // שומרים יבשת תמיד
+                } else if (isUSA) {
+                    // זיהוי אלסקה והוואי ושמירה עליהם (חיתוך שטחים לא רלוונטים)
+                    let isAlaska = (pd.bounds.maxX < -130 && pd.bounds.minY > 50);
+                    let isHawaii = (pd.bounds.maxX < -150 && pd.bounds.maxY < 30);
+                    if (isAlaska || isHawaii) filteredPolygons.push(pd.poly);
+                } else {
+                    // במדינות אחרות - שומרים איים שקרובים ליבשת (כמו סיציליה, קורסיקה)
+                    let nearX = pd.bounds.maxX >= (largestBounds.minX - buffer) && pd.bounds.minX <= (largestBounds.maxX + buffer);
+                    let nearY = pd.bounds.maxY >= (largestBounds.minY - buffer) && pd.bounds.minY <= (largestBounds.maxY + buffer);
+                    if (nearX && nearY && pd.area > maxArea * 0.001) { // 0.1% מהשטח מעיף רעש זעיר
+                        filteredPolygons.push(pd.poly);
+                    }
+                }
+            });
+
+            // 4. פעולה כירורגית מיוחדת: הדבקת אלסקה והוואי קרוב לקליפורניה ווושינגטון!
+            if (isUSA) {
+                filteredPolygons.forEach(poly => {
+                    let bounds = getPolyBounds(poly);
+                    let isAlaska = (bounds.maxX < -130 && bounds.minY > 50);
+                    let isHawaii = (bounds.maxX < -150 && bounds.maxY < 30);
+                    
+                    if (isAlaska) {
+                        poly.forEach(ring => ring.forEach(pt => {
+                            pt[0] += 38; // הזזה דרמטית מזרחה
+                            pt[1] -= 25; // הזזה דרמטית דרומה - אלסקה כעת צמודה לסיאטל!
+                        }));
+                    } else if (isHawaii) {
+                        poly.forEach(ring => ring.forEach(pt => {
+                            pt[0] += 50; // מזרחה
+                            pt[1] += 8;  // צפונה - הוואי כעת צמודה לבאחה קליפורניה!
+                        }));
+                    }
+                });
+            }
+
+            // 5. המרה ל-SVG מנורמל - תיקון עיוותים של Mercator ליצירת פרופורציה מושלמת
+            let sumLat = 0, ptCount = 0;
+            filteredPolygons.forEach(poly => poly[0].forEach(pt => { sumLat += pt[1]; ptCount++; }));
+            const cosLat = Math.cos((sumLat / ptCount) * Math.PI / 180);
+
+            let finalMinX = Infinity, finalMaxX = -Infinity, finalMinY = Infinity, finalMaxY = -Infinity;
+            let pathStr = '';
+
+            filteredPolygons.forEach(poly => {
+                poly.forEach(ring => {
+                    ring.forEach((pt, i) => {
+                        let x = pt[0] * cosLat;
+                        let y = -pt[1]; // היפוך ציר Y של SVG
+                        if (x < finalMinX) finalMinX = x;
+                        if (x > finalMaxX) finalMaxX = x;
+                        if (y < finalMinY) finalMinY = y;
+                        if (y > finalMaxY) finalMaxY = y;
+                        pathStr += (i === 0 ? `M ${x} ${y} ` : `L ${x} ${y} `);
+                    });
+                    pathStr += 'Z ';
+                });
+            });
+
+            const width = (finalMaxX - finalMinX) || 1;
+            const height = (finalMaxY - finalMinY) || 1;
+
+            // שוליים זעירים כדי למנוע חיתוך צללית בפינות הקיצוניות
+            const marginX = width * 0.02;
+            const marginY = height * 0.02;
+
+            const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${finalMinX - marginX} ${finalMinY - marginY} ${width + marginX*2} ${height + marginY*2}"><path d="${pathStr}" fill="black" /></svg>`;
+            const svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+
+            // 6. החלת המסיכה והגדלתה למקסימום האפשרי בקונטיינר!
+            videoWrapper.style.maskImage = `url("${svgUrl}")`;
+            videoWrapper.style.webkitMaskImage = `url("${svgUrl}")`;
+            videoWrapper.style.maskSize = 'contain';
+            videoWrapper.style.webkitMaskSize = 'contain';
+            videoWrapper.style.maskPosition = 'center';
+            videoWrapper.style.webkitMaskPosition = 'center';
+            videoWrapper.style.maskRepeat = 'no-repeat';
+            videoWrapper.style.webkitMaskRepeat = 'no-repeat';
+        }
+
+        // --- שפות וכותרות ---
+        const titleTranslations = [
+            "צבע אדום, חפש מחסה",
+            "RED ALERT, SEEK SHELTER",
+            "КРАСНАЯ ТРЕВОГА, ИЩИТЕ УКРЫТИЕ",
+            "ALERTA ROJA, BUSCA REFUGIO",
+            "ALERTE ROUGE, CHERCHEZ UN ABRI"
+        ];
+        let currentLangIdx = 0;
+        const titleElement = document.getElementById('mainTitle');
+
+        setInterval(() => {
+            titleElement.classList.add('is-glitching');
+            setTimeout(() => {
+                currentLangIdx = (currentLangIdx + 1) % titleTranslations.length;
+                titleElement.innerText = titleTranslations[currentLangIdx];
+                titleElement.setAttribute('data-text', titleTranslations[currentLangIdx]);
+                setTimeout(() => { titleElement.classList.remove('is-glitching'); }, 200); 
+            }, 150);
+        }, 2000);
+
+        // --- בקרת שמע ---
+        const muteBtn = document.getElementById('muteBtn');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const videoElement = document.getElementById('countryVideo');
+
+        // הפעלת שמע נמוך מיד בתחילת הטעינה
+        videoElement.volume = 0.1;
+
+        muteBtn.addEventListener('click', () => {
+            videoElement.muted = !videoElement.muted;
+            muteBtn.innerText = videoElement.muted ? '🔇' : '🔊';
+            if (!videoElement.muted && volumeSlider.value === "0") {
+                volumeSlider.value = 0.1;
+                videoElement.volume = 0.1;
+            }
+        });
+
+        volumeSlider.addEventListener('input', (e) => {
+            videoElement.volume = e.target.value;
+            if (videoElement.volume == 0) {
+                videoElement.muted = true;
+                muteBtn.innerText = '🔇';
+            } else {
+                videoElement.muted = false;
+                muteBtn.innerText = '🔊';
+            }
+        });
+
+        // --- הבהוב מדינות ---
+        let blinkingPolygonId = null;
+        let blinkState = false;
+        let blinkInterval = null;
+        let isAnimatingAction = false;
+
+        function startPolygonBlink(countryId) {
+            blinkingPolygonId = countryId;
+            blinkState = true;
+            blinkInterval = setInterval(() => {
+                blinkState = !blinkState;
+                world.polygonCapColor(polygonColorAccessor);
+            }, 200);
+        }
+
+        function stopPolygonBlink() {
+            clearInterval(blinkInterval);
+            blinkingPolygonId = null;
+            blinkState = false;
+            world.polygonCapColor(polygonColorAccessor);
+        }
+
+        const polygonColorAccessor = feat => {
+            const countryName = feat.properties.ADMIN;
+            if (countryName === blinkingPolygonId) {
+                // המדינה המהבהבת: כחול לישראל, אדום לכל השאר
+                if (countryName === 'Israel') return blinkState ? 'rgba(255, 255, 255, 0.9)' : 'rgba(59, 130, 246, 0.9)';
+                return blinkState ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 0, 0, 0.9)';
+            }
+            if (countryName === 'Iran' || countryName === 'Lebanon') {
+                return 'rgba(234, 179, 8, 0.6)';
+            }
+            if (countryName === 'Israel') {
+                return 'rgba(59, 130, 246, 0.7)'; // צבע ברירת מחדל כחול לישראל
+            }
+            return videoData[countryName] !== undefined ? 'rgba(220, 38, 38, 0.7)' : 'rgba(30, 41, 59, 0.6)';
+        };
+
+        // --- נתוני תלת מימד (איראן, לבנון, ארטילריה, פגיעות) ---
+        const threatOrigins = [
+            { id: 'Iran', name: 'איראן', type: 'threat', lat: 32.4279, lng: 53.6880, flagClass: 'iran-flag', logo: '<span class="iran-logo">☫</span>' },
+            { id: 'Lebanon', name: 'חיזבאללה', type: 'threat', lat: 33.8547, lng: 35.8623, flagClass: 'hezbollah-flag', logo: '<span class="hezbollah-logo">حزب<br>الله</span>' }
+        ];
+
+        const attackArcs = [];
+        markersData.forEach(dest => {
+            threatOrigins.forEach(origin => {
+                attackArcs.push({
+                    startLat: origin.lat, startLng: origin.lng, endLat: dest.lat, endLng: dest.lng,
+                    color: ['rgba(255, 0, 0, 0.05)', 'rgba(255, 50, 50, 0.9)'] 
+                });
+            });
+        });
+
+        const explosionData = [];
+        markersData.forEach(dest => {
+            explosionData.push({ lat: dest.lat, lng: dest.lng, maxR: 2.0, speed: 1.0, repeat: 3000, colorFn: t => `rgba(255, 255, 255, ${Math.max(0, 1 - t)})` });
+            explosionData.push({ lat: dest.lat, lng: dest.lng, maxR: 0.6, speed: 3.5, repeat: 3000, colorFn: t => `rgba(255, 255, 255, ${Math.max(0, 1 - t * 2)})` });
+            for (let i = 0; i < 4; i++) {
+                explosionData.push({
+                    lat: dest.lat + (Math.random() - 0.5) * 0.6, lng: dest.lng + (Math.random() - 0.5) * 0.6, maxR: 0.15 + Math.random() * 0.3, speed: 1.5 + Math.random() * 2, repeat: 3000, colorFn: t => `rgba(255, 230, 150, ${Math.max(0, 1 - t)})`
+                });
+            }
+        });
+
+        function handleLocationAction(countryId, displayName, videoUrl, lat, lng, targetAltitude = 0.5) {
+            if (isAnimatingAction) return;
+            isAnimatingAction = true;
+            world.controls().autoRotate = false;
+            
+            startPolygonBlink(countryId);
+
+            setTimeout(() => {
+                stopPolygonBlink();
+                world.pointOfView({ lat, lng, altitude: targetAltitude }, 1200);
+                setTimeout(() => {
+                    openVideoModal(displayName, videoUrl, countryId);
+                    isAnimatingAction = false;
+                }, 1200);
+            }, 2000);
+        }
+
+        let lastClickTime = 0;
+        let lastClickedCountry = null;
+
+        // --- אתחול הגלובוס ---
+        const world = Globe()
+            (document.getElementById('globeViz'))
+            .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-night.jpg')
+            .backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
+            .polygonAltitude(0.01)
+            .polygonSideColor(() => 'rgba(0, 0, 0, 0.1)')
+            .polygonStrokeColor(() => '#111')
+            .polygonCapColor(polygonColorAccessor)
+            .polygonLabel(feat => {
+                const countryName = feat.properties.ADMIN;
+                const isIsrael = countryName === 'Israel';
+                const hasVideo = videoData[countryName] !== undefined;
+                
+                const borderColor = isIsrael ? '#3b82f6' : (hasVideo ? '#ef4444' : '#475569');
+                const subColor = isIsrael ? '#93c5fd' : '#fca5a5';
+                
+                return `
+                    <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; border: 1px solid ${borderColor}; text-align: center; direction: ltr;">
+                        <strong style="color: white;">${countryName}</strong>
+                        ${hasVideo ? `<br><span style="color: ${subColor}; font-size: 12px;">Double click to view</span>` : ''}
+                    </div>
+                `;
+            })
+            .htmlElementsData([...markersData, ...threatOrigins])
+            .htmlLat('lat')
+            .htmlLng('lng')
+            .htmlAltitude(0.011)
+            .htmlElement(d => {
+                const el = document.createElement('div');
+                el.style.pointerEvents = 'none';
+                
+                if (d.type === 'threat') {
+                    el.innerHTML = `
+                        <div class="threat-marker-inner">
+                            <div class="flag-fabric ${d.flagClass}">${d.logo}</div>
+                            <div class="flag-pole"></div>
+                            <div class="threat-label">${d.name}</div>
+                        </div>
+                    `;
+                    return el;
+                }
+
+                d.element = el; 
+                
+                // הסתרת האיקון הפיזי של ישראל מהגלובוס
+                if (d.id === 'Israel') {
+                    el.style.display = 'none';
+                    return el;
+                }
+
+                // ישראל מקבלת קלאס ייחודי לעיצוב כחול
+                const extraClass = d.id === 'Israel' ? 'israel-marker' : (d.isCity ? 'city-marker' : '');
+                const prefix = d.isCity ? '✦ ' : '';
+                
+                el.innerHTML = `
+                    <div class="map-marker-inner ${extraClass}">
+                        <div class="marker-label">${prefix}${d.name}</div>
+                        <div class="marker-pin"></div>
+                    </div>
+                `;
+
+                let clickTimer = null;
+                const innerEl = el.querySelector('.map-marker-inner');
+                innerEl.onclick = (e) => {
+                    e.stopPropagation();
+                    if (clickTimer) {
+                        clearTimeout(clickTimer);
+                        clickTimer = null;
+                        const zoomAlt = d.isCity ? 0.2 : 0.5;
+                        handleLocationAction(d.id, d.name, d.video, d.lat, d.lng, zoomAlt);
+                    } else {
+                        clickTimer = setTimeout(() => { clickTimer = null; }, 300);
+                    }
+                };
+                return el;
+            })
+            .arcsData(attackArcs)
+            .arcStartLat('startLat')
+            .arcStartLng('startLng')
+            .arcEndLat('endLat')
+            .arcEndLng('endLng')
+            .arcColor('color')
+            .arcDashLength(0.3)
+            .arcDashGap(1.5)
+            .arcDashInitialGap(() => Math.random() * 2)
+            .arcDashAnimateTime(3000)
+            .arcStroke(0.4)
+            .ringsData(explosionData)
+            .ringLat('lat')
+            .ringLng('lng')
+            .ringAltitude(0.015)
+            .ringColor(d => d.colorFn)
+            .ringMaxRadius('maxR')
+            .ringPropagationSpeed('speed')
+            .ringRepeatPeriod('repeat')
+            .onPolygonClick((feat, event, { lat, lng }) => {
+                const countryName = feat.properties.ADMIN;
+                const currentTime = new Date().getTime();
+                
+                if (lastClickedCountry === countryName && (currentTime - lastClickTime) < 500) {
+                    if (videoData[countryName] !== undefined) {
+                        handleLocationAction(countryName, countryName, videoData[countryName], lat, lng, 0.5);
+                    }
+                }
+                
+                lastClickTime = currentTime;
+                lastClickedCountry = countryName;
+            });
+
+        // טעינת מפת העולם והכנת המידע
+        fetch('https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson')
+            .then(res => res.json())
+            .then(countries => {
+                globalGeoJsonData = countries.features; 
+                world.polygonsData(globalGeoJsonData);
+                document.getElementById('loadingOverlay').classList.add('hidden');
+                world.pointOfView({ lat: 32.4279, lng: 53.6880, altitude: 1.2 }, 1000);
+                world.controls().autoRotate = true;
+                world.controls().autoRotateSpeed = 0.5;
+
+                // הפעלת טעינת הסרטונים ברקע רק *לאחר* שהגלובוס והמפה סיימו להיטען
+                preloadVideosInBackground();
+            })
+            .catch(err => {
+                console.error('שגיאה בטעינת המפה:', err);
+                document.getElementById('loadingOverlay').innerHTML = '<div class="text-red-500">שגיאה בטעינת הנתונים. נא לרענן את העמוד.</div>';
+            });
+
+        // --- ניהול החלונית והחיתוך הצורתי (Modal) ---
+        const modal = document.getElementById('videoModal');
+        const modalContent = document.getElementById('modalContent');
+        const closeBtn = document.getElementById('closeBtn');
+        const countryTitle = document.getElementById('countryTitle');
+        const modalAlertTitle = document.getElementById('modalAlertTitle');
+        const videoWrapper = document.getElementById('videoWrapper');
+
+        function openVideoModal(displayName, videoUrl, countryId) {
+            countryTitle.innerText = displayName;
+            
+            // --- הפעלת חיתוך ויצירת המסיכה הענקית ---
+            const feature = globalGeoJsonData.find(f => f.properties.ADMIN === countryId);
+            applyCountryMask(feature);
+
+            const nativeAlertText = nativeAlerts[countryId] || 'RED ALERT';
+            modalAlertTitle.innerText = nativeAlertText;
+            modalAlertTitle.setAttribute('data-text', nativeAlertText);
+            
+            // עיצוב ייחודי למקרה של ישראל (ללא וידאו, רק מסיכה שחורה וכיתוב כחול)
+            if (countryId === 'Israel') {
+                modalAlertTitle.style.color = '#3b82f6';
+                modalAlertTitle.style.textShadow = '0 0 15px #3b82f6';
+                modalAlertTitle.style.fontSize = window.innerWidth < 768 ? '1.5rem' : '2.5rem';
+                videoElement.style.opacity = '0'; // הסתרת וידאו לחשיפת צורת המסיכה
+                
+                // סיום אוטומטי של הצגת "הסרטון" לאחר 5 שניות
+                setTimeout(() => {
+                    if (!modal.classList.contains('hidden')) {
+                         videoElement.dispatchEvent(new Event('ended'));
+                    }
+                }, 5000);
+            } else {
+                modalAlertTitle.style.color = '#ff3333';
+                modalAlertTitle.style.textShadow = '0 0 10px #ff0000';
+                modalAlertTitle.style.fontSize = ''; // חזרה לגודל טבעי
+                videoElement.style.opacity = '1';
+                videoElement.src = videoUrl;
+                videoElement.load(); 
+                videoElement.play().catch(e => console.log('הפעלה אוטומטית נחסמה', e));
+            }
+            
+            modal.classList.remove('hidden', 'overlay-exit');
+            modal.classList.add('overlay-enter');
+            
+            modalContent.classList.remove('modal-content-exit');
+            modalContent.classList.add('modal-content-enter');
+        }
+
+        function closeVideoModal() {
+            modalContent.classList.remove('modal-content-enter');
+            modalContent.classList.add('modal-content-exit');
+            
+            modal.classList.remove('overlay-enter');
+            modal.classList.add('overlay-exit');
+            
+            videoElement.pause();
+            
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('overlay-exit'); 
+                videoElement.removeAttribute('src'); 
+                videoElement.load(); 
+                
+                world.controls().autoRotate = true;
+                const currentPOV = world.pointOfView();
+                world.pointOfView({ ...currentPOV, altitude: 1.5 }, 1000);
+            }, 500); 
+        }
+
+        // --- אוטומציה: סיור סדרתי תמיד מסתיים בישראל ---
+        let isAutoTouring = false;
+        let tourTimeout = null;
+        let currentActiveMarker = null;
+        let currentTourIndex = 0;
+
+        const autoTourBtn = document.getElementById('autoTourBtn');
+        const autoTourText = document.getElementById('autoTourText');
+        const autoTourIcon = document.getElementById('autoTourIcon');
+
+        videoElement.addEventListener('ended', () => {
+            closeVideoModal();
+            if (isAutoTouring) {
+                // אם סיימנו לנגן את ישראל, הלופ עוצר!
+                if (currentActiveMarker && currentActiveMarker.id === 'Israel') {
+                    setTimeout(stopAutoTour, 500);
+                } else {
+                    tourTimeout = setTimeout(playNextLocation, 1000);
+                }
+            }
+        });
+
+        autoTourBtn.addEventListener('click', () => {
+            isAutoTouring = !isAutoTouring;
+            if (isAutoTouring) {
+                autoTourText.innerText = 'Stop Tour';
+                autoTourIcon.innerText = '⏹';
+                autoTourBtn.classList.replace('bg-red-600', 'bg-gray-700');
+                autoTourBtn.classList.replace('hover:bg-red-700', 'hover:bg-gray-800');
+                autoTourBtn.classList.replace('border-red-400', 'border-gray-500');
+                currentTourIndex = 0; // מתחיל מ-0 ובסוף יגיע לישראל בגלל שהיא אחרונה במערך
+                playNextLocation();
+            } else {
+                stopAutoTour();
+            }
+        });
+
+        function playNextLocation() {
+            if (!isAutoTouring) return;
+            if (currentActiveMarker && currentActiveMarker.element) {
+                currentActiveMarker.element.classList.remove('blinking', 'blinking-blue');
+            }
+
+            // הגנה למקרה שהאינדקס חרג
+            if (currentTourIndex >= markersData.length) {
+                stopAutoTour();
+                return;
+            }
+
+            const nextLocation = markersData[currentTourIndex];
+            currentActiveMarker = nextLocation;
+            currentTourIndex++;
+
+            if (nextLocation.element) {
+                if (nextLocation.id === 'Israel') {
+                    nextLocation.element.classList.add('blinking-blue');
+                } else {
+                    nextLocation.element.classList.add('blinking');
+                }
+            }
+
+            const zoomAlt = nextLocation.isCity ? 0.2 : 0.5;
+            handleLocationAction(nextLocation.id, nextLocation.name, nextLocation.video, nextLocation.lat, nextLocation.lng, zoomAlt);
+        }
+
+        function stopAutoTour() {
+            isAutoTouring = false;
+            autoTourText.innerText = 'Auto Tour';
+            autoTourIcon.innerText = '▶';
+            autoTourBtn.classList.replace('bg-gray-700', 'bg-red-600');
+            autoTourBtn.classList.replace('hover:bg-gray-800', 'hover:bg-red-700');
+            autoTourBtn.classList.replace('border-gray-500', 'border-red-400');
+            
+            clearTimeout(tourTimeout);
+            
+            if (currentActiveMarker && currentActiveMarker.element) {
+                currentActiveMarker.element.classList.remove('blinking', 'blinking-blue');
+            }
+            currentActiveMarker = null;
+        }
+
+        closeBtn.addEventListener('click', () => {
+            if (isAutoTouring) stopAutoTour();
+            closeVideoModal();
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                if (isAutoTouring) stopAutoTour();
+                closeVideoModal();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            world.width(window.innerWidth);
+            world.height(window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
